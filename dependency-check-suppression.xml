@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OWASP Dependency-Check suppressions for nia-dip (UKW-SEC-SCAN-001).
+  Every suppression needs: the CVE or CPE, why it does not apply, who
+  approved it, and an expiry date. None yet.
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+</suppressions>

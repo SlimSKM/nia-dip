@@ -1,0 +1,72 @@
+# Project Semgrep rules (UKW-SEC-SCAN-001). CI also runs the registry
+# rulesets (p/python, p/django, p/react, p/secrets); these add DIP rules.
+rules:
+  - id: dip-no-raw-orm-sql
+    message: Raw SQL through the ORM. Use the ORM (NFR-DIP-021); SQL lives only in core migrations and apps/core.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: $M.objects.raw(...)
+      - pattern: $Q.extra(...)
+      - pattern: django.db.models.expressions.RawSQL(...)
+    paths:
+      exclude: [backend/apps/core/]
+
+  - id: dip-no-formatted-sql
+    message: SQL built with string formatting outside apps/core. Pass parameters to cursor.execute instead.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute(f"...")
+      - pattern: $C.execute("..." % $X, ...)
+      - pattern: $C.execute("...".format(...), ...)
+    paths:
+      exclude: [backend/apps/core/, backend/apps/audit/, "backend/**/tests/**", "backend/**/tests_*.py", "backend/**/test_*.py"]
+
+  - id: dip-no-pymupdf
+    message: PyMuPDF (fitz) is AGPL-3.0 and banned (ADR-DIP-002). Use pdfplumber / pypdfium2.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: import fitz
+      - pattern: import pymupdf
+      - pattern: from fitz import $X
+      - pattern: from pymupdf import $X
+
+  - id: dip-no-django-in-dip-core
+    message: dip_core must stay framework-free (ADR-DIP-002, NFR-DIP-050).
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: import django
+      - pattern: from django import $X
+      - pattern: from django.$M import $X
+      - pattern: import rest_framework
+      - pattern: from rest_framework.$M import $X
+      - pattern: from apps.$M import $X
+    paths:
+      include: [backend/dip_core/]
+
+  - id: dip-no-mark-safe
+    message: mark_safe / SafeString bypass output encoding.
+    severity: WARNING
+    languages: [python]
+    pattern-either:
+      - pattern: django.utils.safestring.mark_safe(...)
+      - pattern: mark_safe(...)
+
+  - id: dip-no-env-dump
+    message: Never print or log the environment (secrets live there; CLAUDE.md).
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: print(os.environ)
+      - pattern: print(dict(os.environ))
+      - pattern: $LOG.$F(..., os.environ, ...)
+
+  - id: dip-no-dangerously-set-inner-html
+    message: dangerouslySetInnerHTML bypasses React escaping (NFR-DIP-021).
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern: <$E dangerouslySetInnerHTML={...} />

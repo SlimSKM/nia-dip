@@ -1,0 +1,41 @@
+# Gitleaks configuration for nia-dip (UKW-SEC-SCAN-001).
+# Extends the default ruleset and adds DIP-specific rules:
+# - South African ID numbers (13 digits) anywhere outside the synthetic
+#   fixtures and their tests: real client data must never reach Git
+#   (DIP-DISC-001 R10, ADR-DIP-004).
+# - DIP secrets by key name (.env is never committed).
+title = "nia-dip gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "za-id-number"
+description = "Possible South African ID number (YYMMDD SSSS C A Z): real personal data must not be committed"
+regex = '''(?:^|[^0-9])([0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{4}[01][0-9]{2})(?:[^0-9]|$)'''
+tags = ["pii", "popia"]
+[rules.allowlist]
+description = "Synthetic identity values used by the redaction tests"
+paths = [
+  '''^backend/tests/fixtures/synthetic/''',
+  '''^backend/tests/.*redact.*\.py$''',
+  '''^backend/dip_core/redact/.*test.*\.py$''',
+]
+
+[[rules]]
+id = "dip-secret-assignment"
+description = "DIP secret assigned in a tracked file"
+regex = '''(?i)\b(DJANGO_SECRET_KEY|DIP_FILE_MASTER_KEY|POSTGRES_(?:SUPERUSER_)?PASSWORD|POSTGRES_APP_PASSWORD|DIP_JWT_SIGNING_KEY)\s*[=:]\s*['"]?([^\s'"#]{12,})'''
+secretGroup = 2
+tags = ["secret"]
+[rules.allowlist]
+description = "Placeholders in the example env file"
+regexes = ['''^change-me''']
+paths = ['''^\.env\.example$''']
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+  '''^\.secrets\.baseline$''',
+  '''(^|/)package-lock\.json$''',
+]

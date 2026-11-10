@@ -1,0 +1,55 @@
+# --- Secrets: never commit. Only the placeholder file is tracked. ---
+.env
+.env.*
+!.env.example
+
+# --- Client data: never in Git (DIP-TST-001 §3, OQ-DIP-14). ---
+# Real fixtures live outside the repo (/opt/nia/dip/fixtures on ukw-dev).
+fixtures/real/
+# Spreadsheets and PDFs are allowed ONLY as synthetic fixtures under
+# backend/tests/fixtures/synthetic/.
+*.pdf
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+!backend/tests/fixtures/synthetic/**/*.pdf
+!backend/tests/fixtures/synthetic/**/*.xlsx
+!backend/tests/fixtures/synthetic/**/*.xls
+!backend/tests/fixtures/synthetic/**/*.csv
+# Uploaded and generated files.
+media/
+storage/
+uploads/
+
+# --- Databases ---
+*.sqlite3
+*.db
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.egg-info/
+.venv/
+venv/
+backend/staticfiles/
+
+# --- Frontend ---
+node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store

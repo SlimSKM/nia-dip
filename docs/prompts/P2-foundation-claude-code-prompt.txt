@@ -1,0 +1,134 @@
+TASK: DIP Phase 2 - Foundation. Create the nia-dip repository and build the foundation only: repo standards,
+backend skeleton, tenancy, accounts and roles, auth (JWT + TOTP), audit chain, database role split, Docker
+Compose dev stack, SPA shell, CI. NO import, mapping, export or OCR features (those are Phases 3-6).
+
+READ FIRST, IN THIS ORDER (copied by the owner to ~/dip-inbox/docs/):
+  discovery/DIP-DISC-001*, architecture/architecture-decision-records/ADR-DIP-001..006,
+  requirements/DIP-URD-001*, requirements/DIP-FIX-001*, architecture/DIP-PDS-001*, user-guide/DIP-UX-001*,
+  testing/DIP-TST-001*, and this prompt.
+Precedence: URD (requirements) > PDS (architecture) > this prompt for scope details. Flag conflicts; don't resolve
+them silently.
+
+REFERENCE IMPLEMENTATION (READ ONLY): /opt/nia/tdh/dev (TDH, Django 5.2 + django-tenants, M2 merged).
+Port its proven patterns instead of reinventing them, renaming tdh_* to dip_*: the audit hash chain and
+checkpoint, the attribution middleware and attributed() wrapper, config/dbroles.py, bootstrap_db_roles,
+apply_db_grants, verify_audit_chain, scripts/env_check.py, the one-shot migrate/bootstrap compose services,
+json-file log rotation, the Makefile targets (with -p dip), CLAUDE.md rules (never print .env, etc.), per-tenant
+user model and the "tenant accounts can never be superuser/staff" constraint. Never write to the TDH checkout,
+never run its make targets, never touch tdh-poc or ukw-poc.
+
+HARD RULES
+- Same versions as TDH: Python, Django 5.2.x LTS, django-tenants, psycopg, DRF. Read them from TDH's pinned
+  requirements; record them in the report. Node: use the current Active LTS (24.x), not 20 (EOL April 2026);
+  note the deviation from the UKW-DEV-CICD-001 template value.
+- New dependencies beyond TDH's: djangorestframework-simplejwt, django-otp (TOTP), drf-spectacular,
+  jsonschema, pytest, pytest-django, hypothesis; frontend: react, react-dom, react-router, @tanstack/react-query,
+  react-hook-form, zod, vitest, @testing-library/react, @playwright/test, eslint, prettier. Anything else: ask first.
+  Do NOT add PyMuPDF (AGPL; ADR-DIP-002). PDF/OCR libraries are not needed in this phase.
+- Containers dip_web, dip_db, dip_migrate, dip_bootstrap. Compose project "dip". Every published port binds to
+  127.0.0.1 (web: 127.0.0.1:8020). DB roles dip_owner / dip_app. Web never holds owner credentials.
+- Never source, cat, grep or print .env. Generate secrets with a script that writes them into .env without
+  echoing (as TDH's env_check approach); tell the owner which keys were created, never values.
+- No real client files in the repo, ever. .gitignore must exclude .env*, fixtures/real/, *.pdf and *.xlsx outside
+  backend/tests/fixtures/synthetic/, media/, storage/, *.sqlite3.
+- One commit per step; `make test` (and frontend tests from step 7) before each commit; never commit red.
+- Don't install system packages or change Docker daemon settings without asking.
+
+STEP 0 - CHECKS
+- `ssh -T git@github-nia-dip` authenticates (owner set up the deploy key; see owner steps in the chat). If not, STOP.
+- /opt/nia/dip exists and is owned by skmadm; /opt/nia/dip/dev does not exist yet.
+- Port 127.0.0.1:8020 is free (`ss -ltn`). Docker and compose v2 available. Report free disk and RAM.
+
+STEP 1 - REPO + DOCS (commit 1, on main)
+- `git clone git@github-nia-dip:SlimSKM/nia-dip.git /opt/nia/dip/dev` (empty repo).
+- Create the PDS §2 layout (empty packages with __init__.py and README stubs where needed).
+- Copy ~/dip-inbox/docs/* into docs/ keeping the folder structure; add docs/README.md (index + precedence).
+- Repo standards (UKW-SEC-SCAN-001 §6): .gitleaks.toml, .secrets.baseline, semgrep.yml,
+  dependency-check-suppression.xml, SECURITY.md; plus README.md, CLAUDE.md (DIP rules, ported from TDH and
+  adapted), CHANGELOG.md, .gitignore, .env.example (key names and placeholders only), .pre-commit-config.yaml
+  (gitleaks protect --staged, ruff, ruff-format).
+- Commit "chore: repository standards and Phase 0-1 documents"; push main. From here on, work on branch
+  p2-foundation.
+
+STEP 2 - BACKEND SKELETON + TENANCY (commit 2)
+- Django project in backend/ (config/ with env-driven settings via the same library TDH uses; DEBUG off by
+  default). django-tenants with public + one tenant; tenant model "Tenant" (TDH naming); domain dip-dev.localhost
+  for dev; management commands provision_tenant and create_tenant_user (ported).
+- Apps (empty models except where stated): tenants, accounts, audit, reference, profiles, imports, exports,
+  reports, retention, api. dip_core/ package with no Django imports; add an import-linter (or a test) that fails if
+  dip_core imports django or apps.
+- Health endpoint /healthz (no auth, no detail).
+
+STEP 3 - DATABASE ROLES + AUDIT (commit 3)
+- Port from TDH: bootstrap_db_roles (CREATEDB/CREATEROLE only when DEBUG), apply_db_grants (public + every tenant
+  schema; append-only tables SELECT/INSERT only), core SQL migrations for the hash-chained audit_log and
+  audit_checkpoint, attribution middleware + X-Request-ID, attributed(), verify_audit_chain, the core.E010-style
+  check refusing test-only apps without DEBUG.
+- Audit coverage now: accounts_user (identifiers redacted, as TDH), tenant config. Later phases add tables.
+- Tests: the TDH A4 attribution tests (a-d) and the A6d runtime-role denials, adapted.
+
+STEP 4 - ACCOUNTS, ROLES, AUTH (commit 4)
+- Per-tenant users (TDH pattern). Roles: ADMINISTRATOR, IMPORT_OPERATOR, REVIEWER, READ_ONLY (URD §3), a user may
+  hold several. A single has_role/has_permission helper; DRF permission classes per the PDS §8 matrix (stub the
+  matrix for endpoints that don't exist yet, but implement the helper and its tests).
+- Auth (PDS §7): SimpleJWT, access 15 min; refresh in HttpOnly Secure SameSite=Strict cookie, rotated, reuse
+  detected; tenant claim checked against the request host; CSRF on the refresh endpoint; lockout after 5 failures
+  for 15 min (audited); TOTP via django-otp, enforced for ADMINISTRATOR and REVIEWER (setting
+  DIP_REQUIRE_MFA, default true; OQ-DIP-07); password policy as TDH/Specta.
+- Endpoints: POST /api/v1/auth/token, /auth/token/refresh, /auth/mfa/setup, /auth/mfa/verify, /auth/logout,
+  GET /api/v1/me. Errors as RFC 9457 problem+json with a DIP error code. drf-spectacular schema at
+  /api/v1/schema (auth required in non-DEBUG); write docs/api/openapi.yaml from it in CI.
+- Rate limits: sign-in 5/min/IP and 20/hour/user (DRF throttles).
+- Tests: every case above, plus "read-only user gets 403 on every write endpoint" generated from the URL map.
+
+STEP 5 - DOCKER COMPOSE DEV STACK (commit 5)
+- Dockerfile (python slim, non-root user, no build tools in final stage), compose.dev.yaml and
+  docker-compose.yml (POC base, not deployed yet): dip_web (gunicorn, WhiteNoise for the SPA build later),
+  dip_db (postgres:16, named volume dip_pgdata), dip_migrate (one-shot, owner creds, migrate_schemas then
+  apply_db_grants), dip_bootstrap (profile "bootstrap", superuser creds, creates roles). Explicit env var lists per
+  service; json-file logging 10m x 10 on every service; healthchecks; no published DB port.
+- Makefile with -p dip: up, down, logs, test, migrate, bootstrap-db-roles, verify-audit, env-check, psql,
+  seed-dev (creates the dev tenant + one user per role with generated passwords written to a 0600 file outside
+  the repo, never echoed), shell.
+- scripts/env_check.py ported (dev and poc profiles derived from the compose files).
+- Bring the stack up on ukw-dev, run the full bootstrap (generate .env keys without printing), make test,
+  make verify-audit. Report container names, status and ports.
+
+== CHECKPOINT 1: STOP. Report (format below) and wait for the owner's "go". ==
+
+STEP 6 - FRONTEND SHELL (commit 6)
+- frontend/ with Vite + React + TypeScript (strict). Feature folders per PDS §2 (empty pages for later phases).
+- App shell: sign-in (with TOTP step), sign-out, header nav (Dashboard, Batches, Exports, Reports, Reference
+  data, Configuration and Admin for ADMINISTRATOR only), breadcrumbs, back-to-parent, safe cancel, validated
+  `next`, 403/404 pages (TDH UX-NAV rules). Dashboard placeholder per DIP-UX-001 W1 with empty-state cards.
+- API client: fetch wrapper with refresh-on-401, RFC 9457 error display, X-Request-ID; TanStack Query.
+- Design tokens (CSS custom properties) from the Ukwazi Baobab palette: ink #10151C, amber #E8A33D, green
+  #4C8C5A; fonts Jost (UI) self-hosted; WCAG AA contrast checked; responsive to tablet width.
+- Built SPA served by dip_web via WhiteNoise at /, API at /api/. CSP default-src 'self'; no inline scripts.
+- Tests: Vitest + Testing Library for sign-in, MFA step, nav visibility by role; axe-core check on the shell;
+  one Playwright smoke test (sign in as each role, see the right nav, sign out) against the compose stack.
+
+STEP 7 - CI (commit 7)
+- .github/workflows/ukwazi-pipeline.yml from UKW-DEV-CICD-001 §7.1, PROJECT_NAME dip, STACK python-react,
+  Python as TDH, Node 24: security scan (gitleaks, semgrep, bandit, pip-audit, npm audit) -> build -> backend
+  tests with a postgres:16 service -> frontend tests -> Playwright smoke via compose -> coverage gates (70%
+  overall, 90% for dip_core) -> openapi.yaml up to date. Staging/POC/production deploy stages present but
+  disabled (if: false) with a comment; nothing deploys in Phase 2.
+- Pre-commit hooks installed and documented in docs/developer-guide/onboarding.md.
+
+STEP 8 - CLOSE-OUT (commit 8)
+- docs/developer-guide/onboarding.md (clone, bootstrap, make targets, tunnel: ssh -L 8020:127.0.0.1:8020 ukw-dev),
+  docs/BUILD-LOG.md (Phase 2 entry), CHANGELOG.md (0.1.0-dev), README status table (what exists, what doesn't).
+  Docs describe only what is built and tested.
+- Push p2-foundation. Do NOT open the PR.
+
+== CHECKPOINT 2: STOP. Report. ==
+
+REPORT FORMAT (each checkpoint)
+- Commits (hash + one line each) and the push result.
+- Versions pinned (Python, Django, django-tenants, DRF, Node, key frontend libs) and every new dependency with its
+  licence.
+- Test counts and coverage (backend, dip_core, frontend, Playwright); `make verify-audit` output.
+- docker ps for dip_* (names, status, ports).
+- New .env keys (names only) and the exact owner commands still needed.
+- Every deviation from this prompt or the PDS, with the reason; anything you stopped on.
